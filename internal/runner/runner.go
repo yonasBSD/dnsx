@@ -233,12 +233,20 @@ func (r *Runner) InputWorkerStream() {
 		item := strings.TrimSpace(sc.Text())
 		switch {
 		case iputil.IsCIDR(item):
-			hostsC, _ := mapcidr.IPAddressesAsStream(item)
+			hostsC, err := mapcidr.IPAddressesAsStream(item)
+			if err != nil {
+				gologger.Warning().Msgf("Could not parse CIDR '%s': %s\n", item, err)
+				continue
+			}
 			for host := range hostsC {
 				r.workerchan <- host
 			}
 		case asn.IsASN(item):
-			hostsC, _ := asn.GetIPAddressesAsStream(item)
+			hostsC, err := asn.GetIPAddressesAsStream(item)
+			if err != nil {
+				gologger.Warning().Msgf("Could not get IPs for ASN '%s': %s\n", item, err)
+				continue
+			}
 			for host := range hostsC {
 				r.workerchan <- host
 			}
