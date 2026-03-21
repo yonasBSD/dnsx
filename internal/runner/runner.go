@@ -285,10 +285,11 @@ func (r *Runner) prepareInput() error {
 		err         error
 	)
 
-	// copy stdin to a temporary file, but only when no file-based input
-	// is already available — avoids blocking forever on an empty pipe
+	// copy stdin to a temporary file, but only when no file-based or inline input
+	// is already available -- avoids blocking forever on an empty pipe
 	hasStdin := fileutil.HasStdin()
-	if hasStdin && !fileutil.FileExists(r.options.Hosts) && r.options.Domains == "" {
+	hasInlineHosts := r.options.Hosts != "" && !fileutil.FileExists(r.options.Hosts) && !argumentHasStdin(r.options.Hosts)
+	if hasStdin && !fileutil.FileExists(r.options.Hosts) && r.options.Domains == "" && !hasInlineHosts {
 		tmpStdinFile, err := fileutil.GetTempFileName()
 		if err != nil {
 			return err
@@ -319,20 +320,13 @@ func (r *Runner) prepareInput() error {
 	}
 
 	if sc == nil {
-		// attempt to load list from file
-		if fileutil.FileExists(r.options.Hosts) {
-			f, err := fileutil.ReadFile(r.options.Hosts)
-			if err != nil {
-				return err
-			}
-			sc = f
-		} else if argumentHasStdin(r.options.Hosts) || hasStdin {
-			sc, err = fileutil.ReadFile(r.tmpStdinFile)
-			if err != nil {
-				return err
-			}
-		} else {
-			return errors.New("hosts file or stdin not provided")
+		hostArg := r.options.Hosts
+		if hostArg == "" && hasStdin {
+			hostArg = stdinMarker
+		}
+		sc, err = r.preProcessArgument(hostArg)
+		if err != nil {
+			return err
 		}
 	}
 
