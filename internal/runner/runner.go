@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/logrusorgru/aurora"
+	"github.com/logrusorgru/aurora/v4"
 	"github.com/miekg/dns"
 	"github.com/pkg/errors"
 	asnmap "github.com/projectdiscovery/asnmap/libs"
@@ -54,7 +55,7 @@ type Runner struct {
 	stats                clistats.StatisticsClient
 	tmpStdinFile         string
 	droppedDomains       atomic.Int64
-	aurora               aurora.Aurora
+	aurora               *aurora.Aurora
 }
 
 type wildcardJob struct {
@@ -210,7 +211,7 @@ func New(options *Options) (*Runner, error) {
 		limiter:              limiter,
 		hm:                   hm,
 		stats:                stats,
-		aurora:               aurora.NewAurora(!options.NoColor),
+		aurora:               aurora.New(aurora.WithColors(!options.NoColor)),
 	}
 
 	return &r, nil
@@ -419,21 +420,35 @@ func (r *Runner) addHostsToHMapFromChan(hosts chan string) (numHosts int) {
 }
 
 func (r *Runner) preProcessArgument(arg string) (chan string, error) {
-	// read from:
-	// file
 	switch {
 	case fileutil.FileExists(arg):
-		return fileutil.ReadFile(arg)
-	// stdin
+		return linesIterToChan(fileutil.Lines(arg)), nil
 	case argumentHasStdin(arg):
-		return fileutil.ReadFile(r.tmpStdinFile)
-	// inline
+		return linesIterToChan(fileutil.Lines(r.tmpStdinFile)), nil
 	case arg != "":
 		data := strings.ReplaceAll(arg, Comma, NewLine)
-		return fileutil.ReadFileWithReader(strings.NewReader(data))
+		return linesIterToChan(fileutil.LinesReader(strings.NewReader(data))), nil
 	default:
 		return nil, errors.New("empty argument")
 	}
+}
+
+// linesIterToChan bridges fileutil.Lines/LinesReader (an iter.Seq2 that
+// surfaces a per-line error) to the channel signature the rest of the
+// runner expects. Iteration errors are silently dropped to preserve the
+// historical "best effort" behaviour of the old fileutil.ReadFile.
+func linesIterToChan(it iter.Seq2[string, error]) chan string {
+	ch := make(chan string)
+	go func() {
+		defer close(ch)
+		for line, err := range it {
+			if err != nil {
+				return
+			}
+			ch <- line
+		}
+	}()
+	return ch
 }
 
 func normalize(data string) string {
